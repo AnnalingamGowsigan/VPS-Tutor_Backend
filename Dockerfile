@@ -1,6 +1,14 @@
 # Use the official Node.js 14 image
 FROM node:14-alpine
 
+# Create a new user with UID 10014
+RUN addgroup -g 10014 choreo && \
+    adduser  --disabled-password  --no-create-home --uid 10014 --ingroup choreo choreouser
+
+VOLUME /tmp
+
+USER 10014
+
 # Create a working directory
 WORKDIR /usr/src/app
 
