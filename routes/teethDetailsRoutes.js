@@ -2,6 +2,8 @@ const { db, bucket } = require("../config/db");
 const express = require("express");
 const router = express.Router();
 
+const COLLECTION_NAME = "dentalComplaintCases";
+
 // Assuming db.collection("teeth") represents your collection in Firestore
 router.get("/get", async (req, res) => {
   const caseId = req.query.caseId;
@@ -25,12 +27,19 @@ router.get("/get", async (req, res) => {
 // Route to store tooth details in Firestore
 router.post("/store", async (req, res) => {
   try {
-    const teethData = req.body;
-    // const caseId = req.body.caseId;
-    const caseId = "case1Hiiiii";
+    // Extract case data from the request body
+    const { mainTypeName, complaintTypeName, caseId, sectionName, Teeth } =
+      req.body;
 
-    // Store the extracted JSON data in Firestore with the document ID as caseId
-    await db.collection("caseToothDetails").doc(caseId).set(teethData);
+    const complaintTypeRef = db
+      .collection(COLLECTION_NAME)
+      .doc(mainTypeName)
+      .collection(complaintTypeName)
+      .doc(caseId)
+      .collection(sectionName);
+
+    //store tooth array in collection
+    await complaintTypeRef.doc("teeth").set({ Teeth: Teeth });
 
     // Send back the ID of the newly created document
     res.status(201).json({

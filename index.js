@@ -25,7 +25,7 @@ app.use("/api/teacher", teacher);
 const dentalComplaintCasesRoutes = require("./routes/dentalComplaintCasesRoutes");
 app.use("/api/dentalComplaintCases", dentalComplaintCasesRoutes);
 
-const teethDetailsRoutes = require("./routes/teethDetails");
+const teethDetailsRoutes = require("./routes/teethDetailsRoutes");
 app.use("/api/teethDetails", teethDetailsRoutes);
 
 const examintionQuestionsRoutes = require("./routes/examinationQuestionsRoutes");
