@@ -27,10 +27,38 @@ router.post(
       }
 
       // Extract case data from the request body
-      const { mainTypeName, complaintTypeName, caseId, sectionName, Question } =
-        req.body;
+      const {
+        mainTypeName,
+        complaintTypeName,
+        caseId,
+        sectionName,
+        questionType,
+        question,
+        answerChoices,
+      } = req.body;
 
-      const jsonQuestion = JSON.parse(Question);
+      const answerChoicesInJson = JSON.parse(answerChoices);
+
+      let caseQuestionType = null;
+      // Check the type of question
+      if (questionType === "single") {
+        if (req.files.length === 0) {
+          caseQuestionType = "multipleChoiceType";
+        } else if (req.files.length === 1) {
+          caseQuestionType = "multipleChoiceTypeWithQuestionImage";
+        } else if (req.files.length >= 1) {
+          caseQuestionType = "multipleChoiceTypeWithImages";
+        }
+      } else if (questionType === "multiple") {
+        if (req.files.length === 0) {
+          caseQuestionType = "multipleAnswerType";
+        } else if (req.files.length === 1) {
+          caseQuestionType = "multipleAnswerTypeWithQuestionImage";
+        } else if (req.files.length >= 1) {
+          caseQuestionType = "multipleAnswerTypeWithImages";
+        }
+      }
+      console.log(caseQuestionType);
 
       const complaintTypeRef = db
         .collection(COLLECTION_NAME)
@@ -49,83 +77,9 @@ router.post(
       let choices = [];
       let questionImageUrl = null;
 
-      switch (jsonQuestion.questionType) {
-        case "trueOrFalseType":
-          newQuestionRef = await complaintTypeRef.add({
-            Question: {
-              questionType: jsonQuestion.questionType,
-              question: jsonQuestion.question,
-              correctAnswer: jsonQuestion.correctAnswer,
-              questionImageUrl: null,
-              choices: null,
-            },
-          });
-
-          res.status(201).json({
-            message: "Question uploaded successfully.",
-            mainComplaintType: mainTypeName,
-            caseName: complaintTypeName,
-            caseId: caseId,
-            questionId: newQuestionRef.id,
-          });
-          break;
-        case "trueOrFalseTypeWithImage":
-          file = req.files[0];
-          console.log(file); // you can see the file fields here, lots of good info from the parser
-
-          // convert the file buffer to a filestream
-          fileStream = Readable.from(file.buffer);
-
-          // Construct a unique file path with the current date and time
-          currentDateTime = moment().format("YYYYMMDD_HHmmss");
-          // upload to firebase storage
-          fileUpload = bucket.file(
-            `Images/${currentDateTime}_${file.originalname}`
-          );
-
-          // create writestream with the contentType of the incoming file
-          writeStream = fileUpload.createWriteStream({
-            metadata: {
-              contentType: file.mimetype,
-            },
-          });
-
-          // pipe the filestream to be written to storage
-          fileStream
-            .pipe(writeStream)
-            .on("error", (error) => {
-              console.error("Error:", error);
-            })
-            .on("finish", () => {
-              console.log("File upload complete");
-            });
-
-          // Get the download URL of the uploaded image with no expiration
-          downloadURL = await fileUpload.getSignedUrl({
-            action: "read",
-            expires: "12-31-9999", // Set to a far future date
-          });
-
-          newQuestionRef = await complaintTypeRef.add({
-            Question: {
-              questionType: jsonQuestion.questionType,
-              question: jsonQuestion.question,
-              correctAnswer: jsonQuestion.correctAnswer,
-              questionImageUrl: downloadURL,
-              choices: null,
-            },
-          });
-
-          res.status(201).json({
-            message: "Question uploaded successfully.",
-            mainComplaintType: mainTypeName,
-            caseName: complaintTypeName,
-            caseId: caseId,
-            questionId: newQuestionRef.id,
-            questionImageUrl: downloadURL,
-          });
-          break;
-        case "multipleChoiceTypeWithQuestionAndAnswerImage":
+      let i = 0;
+      switch (caseQuestionType) {
+        case "multipleChoiceTypeWithImages":
           // Iterate over each file and process
           for (const file of req.files) {
             console.log(file); // you can see the file fields here, lots of good info from the parser
@@ -170,15 +124,24 @@ router.post(
 
             // Push the download URL along with the key name
             choices.push({
-              [file.fieldname]: downloadURL[0],
+              text: answerChoicesInJson.answerChoices[i].text,
+              choiceId: file.fieldname,
+              imageUrl: downloadURL[0],
+              isCorrect: answerChoicesInJson.answerChoices[i].isCorrect,
             });
+            i++;
+          }
+
+          if (questionImageUrl === null) {
+            caseQuestionType = "multipleChoiceTypeWithAnswerImage";
+          } else {
+            caseQuestionType = "multipleChoiceTypeWithQuestionAndAnswerImage";
           }
 
           newQuestionRef = await complaintTypeRef.add({
             Question: {
-              questionType: jsonQuestion.questionType,
-              question: jsonQuestion.question,
-              correctAnswer: jsonQuestion.correctAnswer,
+              questionType: caseQuestionType,
+              question: question,
               choices: choices,
               questionImageUrl: questionImageUrl,
             },
@@ -190,6 +153,7 @@ router.post(
             caseName: complaintTypeName,
             caseId: caseId,
             questionId: newQuestionRef.id,
+            questionType: caseQuestionType,
             questionImageUrl: questionImageUrl,
             choices: choices,
           });
@@ -233,10 +197,9 @@ router.post(
 
           newQuestionRef = await complaintTypeRef.add({
             Question: {
-              questionType: jsonQuestion.questionType,
-              question: jsonQuestion.question,
-              correctAnswer: jsonQuestion.correctAnswer,
-              choices: jsonQuestion.choices,
+              questionType: caseQuestionType,
+              question: question,
+              choices: answerChoicesInJson,
               questionImageUrl: downloadURL,
             },
           });
@@ -247,81 +210,17 @@ router.post(
             caseName: complaintTypeName,
             caseId: caseId,
             questionId: newQuestionRef.id,
+            questionType: caseQuestionType,
             questionImageUrl: downloadURL,
+            choices: answerChoicesInJson,
           });
-          break;
-        case "multipleChoiceTypeWithAnswerImage":
-          // Iterate over each file and process
-          for (const file of req.files) {
-            console.log(file); // you can see the file fields here, lots of good info from the parser
-
-            // convert the file buffer to a filestream
-            fileStream = Readable.from(file.buffer);
-
-            // Construct a unique file path with the current date and time
-            currentDateTime = moment().format("YYYYMMDD_HHmmss");
-            // upload to firebase storage
-            fileUpload = bucket.file(
-              `Images/${currentDateTime}_${file.originalname}`
-            );
-
-            // create writestream with the contentType of the incoming file
-            writeStream = fileUpload.createWriteStream({
-              metadata: {
-                contentType: file.mimetype,
-              },
-            });
-
-            // pipe the filestream to be written to storage
-            fileStream
-              .pipe(writeStream)
-              .on("error", (error) => {
-                console.error("Error:", error);
-              })
-              .on("finish", () => {
-                console.log("File upload complete");
-              });
-
-            // Get the download URL of the uploaded image with no expiration
-            downloadURL = await fileUpload.getSignedUrl({
-              action: "read",
-              expires: "12-31-9999", // Set to a far future date
-            });
-
-            // Push the download URL along with the key name
-            choices.push({
-              [file.fieldname]: downloadURL[0],
-            });
-          }
-
-          newQuestionRef = await complaintTypeRef.add({
-            Question: {
-              questionType: jsonQuestion.questionType,
-              question: jsonQuestion.question,
-              correctAnswer: jsonQuestion.correctAnswer,
-              choices: choices,
-              questionImageUrl: null,
-            },
-          });
-
-          res.status(201).json({
-            message: "Question uploaded successfully.",
-            mainComplaintType: mainTypeName,
-            caseName: complaintTypeName,
-            caseId: caseId,
-            questionId: newQuestionRef.id,
-            questionImageUrl: null,
-            choices: choices,
-          });
-
           break;
         case "multipleChoiceType":
           newQuestionRef = await complaintTypeRef.add({
             Question: {
-              questionType: jsonQuestion.questionType,
-              question: jsonQuestion.question,
-              correctAnswer: jsonQuestion.correctAnswer,
-              choices: jsonQuestion.choices,
+              questionType: caseQuestionType,
+              question: question,
+              choices: answerChoicesInJson,
               questionImageUrl: null,
             },
           });
@@ -332,9 +231,11 @@ router.post(
             caseName: complaintTypeName,
             caseId: caseId,
             questionId: newQuestionRef.id,
+            questionType: caseQuestionType,
+            choices: answerChoicesInJson,
           });
           break;
-        case "multipleAnswerTypeWithQuestionAndAnswerImage":
+        case "multipleAnswerTypeWithImages":
           // Iterate over each file and process
           for (const file of req.files) {
             console.log(file); // you can see the file fields here, lots of good info from the parser
@@ -379,15 +280,24 @@ router.post(
 
             // Push the download URL along with the key name
             choices.push({
-              [file.fieldname]: downloadURL[0],
+              text: answerChoicesInJson.answerChoices[i].text,
+              choiceId: [file.fieldname],
+              imageUrl: downloadURL[0],
+              isCorrect: answerChoicesInJson.answerChoices[i].isCorrect,
             });
+            i++;
+          }
+
+          if (questionImageUrl === null) {
+            caseQuestionType = "multipleAnswerTypeWithAnswerImage";
+          } else {
+            caseQuestionType = "multipleAnswerTypeWithQuestionAndAnswerImage";
           }
 
           newQuestionRef = await complaintTypeRef.add({
             Question: {
-              questionType: jsonQuestion.questionType,
-              question: jsonQuestion.question,
-              correctAnswer: jsonQuestion.correctAnswer,
+              questionType: caseQuestionType,
+              question: question,
               choices: choices,
               questionImageUrl: questionImageUrl,
             },
@@ -399,6 +309,7 @@ router.post(
             caseName: complaintTypeName,
             caseId: caseId,
             questionId: newQuestionRef.id,
+            questionType: caseQuestionType,
             questionImageUrl: questionImageUrl,
             choices: choices,
           });
@@ -443,10 +354,9 @@ router.post(
 
           newQuestionRef = await complaintTypeRef.add({
             Question: {
-              questionType: jsonQuestion.questionType,
-              question: jsonQuestion.question,
-              correctAnswer: jsonQuestion.correctAnswer,
-              choices: jsonQuestion.choices,
+              questionType: caseQuestionType,
+              question: question,
+              choices: answerChoicesInJson,
               questionImageUrl: downloadURL,
             },
           });
@@ -458,80 +368,16 @@ router.post(
             caseId: caseId,
             questionId: newQuestionRef.id,
             questionImageUrl: downloadURL,
+            questionType: caseQuestionType,
+            choices: answerChoicesInJson,
           });
-          break;
-        case "multipleAnswerTypeWithAnswerImage":
-          // Iterate over each file and process
-          for (const file of req.files) {
-            console.log(file); // you can see the file fields here, lots of good info from the parser
-
-            // convert the file buffer to a filestream
-            fileStream = Readable.from(file.buffer);
-
-            // Construct a unique file path with the current date and time
-            currentDateTime = moment().format("YYYYMMDD_HHmmss");
-            // upload to firebase storage
-            fileUpload = bucket.file(
-              `Images/${currentDateTime}_${file.originalname}`
-            );
-
-            // create writestream with the contentType of the incoming file
-            writeStream = fileUpload.createWriteStream({
-              metadata: {
-                contentType: file.mimetype,
-              },
-            });
-
-            // pipe the filestream to be written to storage
-            fileStream
-              .pipe(writeStream)
-              .on("error", (error) => {
-                console.error("Error:", error);
-              })
-              .on("finish", () => {
-                console.log("File upload complete");
-              });
-
-            // Get the download URL of the uploaded image with no expiration
-            downloadURL = await fileUpload.getSignedUrl({
-              action: "read",
-              expires: "12-31-9999", // Set to a far future date
-            });
-
-            // Push the download URL along with the key name
-            choices.push({
-              [file.fieldname]: downloadURL[0],
-            });
-          }
-
-          newQuestionRef = await complaintTypeRef.add({
-            Question: {
-              questionType: jsonQuestion.questionType,
-              question: jsonQuestion.question,
-              correctAnswer: jsonQuestion.correctAnswer,
-              choices: choices,
-              questionImageUrl: null,
-            },
-          });
-
-          res.status(201).json({
-            message: "Question uploaded successfully.",
-            mainComplaintType: mainTypeName,
-            caseName: complaintTypeName,
-            caseId: caseId,
-            questionId: newQuestionRef.id,
-            questionImageUrl: null,
-            choices: choices,
-          });
-
           break;
         case "multipleAnswerType":
           newQuestionRef = await complaintTypeRef.add({
             Question: {
-              questionType: jsonQuestion.questionType,
-              question: jsonQuestion.question,
-              correctAnswer: jsonQuestion.correctAnswer,
-              choices: jsonQuestion.choices,
+              questionType: caseQuestionType,
+              question: question,
+              choices: answerChoicesInJson,
               questionImageUrl: null,
             },
           });
@@ -542,6 +388,8 @@ router.post(
             caseName: complaintTypeName,
             caseId: caseId,
             questionId: newQuestionRef.id,
+            questionType: caseQuestionType,
+            choices: answerChoicesInJson,
           });
           break;
         default:
