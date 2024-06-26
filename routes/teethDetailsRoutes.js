@@ -4,20 +4,33 @@ const router = express.Router();
 
 const COLLECTION_NAME = "dentalComplaintCases";
 
-// Assuming db.collection("teeth") represents your collection in Firestore
+// Route to get tooth details from Firestore
 router.get("/get", async (req, res) => {
-  const caseId = req.query.caseId;
   try {
-    // Fetch the document from Firestore
-    const doc = await db.collection("caseToothDetails").doc(caseId).get();
+    // Extract case data from the query parameters
+    const { mainTypeName, complaintTypeName, caseId, sectionName } = req.query;
 
-    // If the document doesn't exist, send back a 404 response
+    // Reference to the document
+    const complaintTypeRef = db
+      .collection(COLLECTION_NAME)
+      .doc(mainTypeName)
+      .collection(complaintTypeName)
+      .doc(caseId)
+      .collection(sectionName)
+      .doc("teeth");
+
+    // Retrieve the document
+    const doc = await complaintTypeRef.get();
+
     if (!doc.exists) {
-      return res.status(404).json({ error: "Document not found" });
+      return res.status(404).json({ error: "No such document!" });
     }
 
     // Send back the document data
-    res.status(200).json(doc.data());
+    res.status(200).json({
+      message: "Tooth details retrieved successfully.",
+      data: doc.data(),
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Internal Server Error" });
