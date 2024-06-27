@@ -254,4 +254,56 @@ router.put("/updateHistoryTakingQuestions", async (req, res) => {
   }
 });
 
+// GET
+// GET HISTORY TAKING QUESTIONS FOR A PARTICULAR CASEID
+// ROUTE : /api/dentalComplaintCases/getCaseDetails
+router.post("/getCaseHistoryTakingQuestions", async (req, res) => {
+  const mainComplaintType = req.body.mainComplaintType;
+  const caseName = req.body.caseName;
+  const caseId = req.body.caseId;
+
+  try {
+    const documentRef = db
+      .collection(COLLECTION_NAME)
+      .doc(mainComplaintType)
+      .collection(caseName)
+      .doc(caseId);
+
+    const documentSnapshot = await documentRef.get();
+
+    if (!documentSnapshot.exists) {
+      return res.status(404).json({
+        status: "Failed",
+        message: "Case details document not found",
+      });
+    }
+
+    const documentData = documentSnapshot.data();
+
+    // Extract all questions from documentData
+    const historyTakingQuestions = documentData.historyTakingQuestions || [];
+
+    // Group questions by questionType
+    const questionsByType = {};
+
+    historyTakingQuestions.forEach((question) => {
+      const questionType = question.questionType;
+
+      if (!questionsByType[questionType]) {
+        questionsByType[questionType] = [];
+      }
+
+      questionsByType[questionType].push({
+        questionText: question.questionText,
+        answer: question.answer,
+        required: question.required,
+      });
+    });
+
+    return res.status(200).json(questionsByType);
+  } catch (error) {
+    console.error("Error getting the document:", error);
+    res.status(500).json({ error: "Failed to get document" });
+  }
+});
 module.exports = router;
