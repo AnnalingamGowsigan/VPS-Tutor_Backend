@@ -7,7 +7,7 @@ const moment = require("moment");
 
 const COLLECTION_NAME = "dentalComplaintCases";
 
-const { db, bucket } = require("../config/db");
+const { admin, db, bucket } = require("../config/db");
 
 // Apply middleware only to the '/createExaminationQuestion' route
 router.post(
@@ -401,5 +401,92 @@ router.post(
     }
   }
 );
+
+// get all questions
+router.get("/getAllExaminationQuestionsBySectionName", async (req, res) => {
+  try {
+    console.log(req.query);
+    const { mainTypeName, complaintTypeName, caseId, sectionName } = req.query;
+
+    const complaintTypeRef = db
+      .collection(COLLECTION_NAME)
+      .doc(mainTypeName)
+      .collection(complaintTypeName)
+      .doc(caseId)
+      .collection(sectionName);
+
+    // Get questions sorted by document ID
+    const questions = [];
+    const snapshot = await complaintTypeRef
+      .orderBy(admin.firestore.FieldPath.documentId())
+      .get();
+    snapshot.forEach((doc) => {
+      questions.push({
+        questionId: doc.id,
+        question: doc.data().Question.question,
+        questionType: doc.data().Question.questionType,
+        questionImageUrl: doc.data().Question.questionImageUrl,
+        choices: doc.data().Question.choices,
+      });
+    });
+
+    res.status(200).json({
+      message: "Questions retrieved successfully.",
+      data: questions,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+// Get all questions by section name
+router.get("/getAllExaminationQuestions", async (req, res) => {
+  try {
+    console.log(req.query);
+    const { mainTypeName, complaintTypeName, caseId } = req.query;
+
+    const caseRef = db
+      .collection(COLLECTION_NAME)
+      .doc(mainTypeName)
+      .collection(complaintTypeName)
+      .doc(caseId);
+
+    // Retrieve all sections within the case
+    const sectionsSnapshot = await caseRef.listCollections();
+    const questionsBySections = {};
+
+    for (const section of sectionsSnapshot) {
+      if (section.id === "toothDetails") {
+        continue;
+      }
+      const sectionName = section.id;
+      const questions = [];
+      const questionsSnapshot = await section
+        .orderBy(admin.firestore.FieldPath.documentId())
+        .get();
+
+      questionsSnapshot.forEach((doc) => {
+        questions.push({
+          questionId: doc.id,
+          question: doc.data().Question.question,
+          questionType: doc.data().Question.questionType,
+          questionImageUrl: doc.data().Question.questionImageUrl,
+          choices: doc.data().Question.choices,
+        });
+      });
+
+      questionsBySections[sectionName] = questions;
+    }
+
+    res.status(200).json({
+      message: "Questions retrieved successfully.",
+      data: questionsBySections,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
 
 module.exports = router;
