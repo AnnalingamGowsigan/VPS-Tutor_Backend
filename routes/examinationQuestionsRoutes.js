@@ -9,24 +9,14 @@ const COLLECTION_NAME = "dentalComplaintCases";
 
 const { admin, db, bucket } = require("../config/db");
 
-// Apply middleware only to the '/createExaminationQuestion' route
+// Middleware and route for creating an examination question
 router.post(
   "/createExaminationQuestion",
   fileParser,
   bodyParser.urlencoded({ extended: true }),
   async (req, res) => {
     try {
-      // Validate if required fields are provided
-      if (
-        !req.body.mainTypeName ||
-        !req.body.complaintTypeName ||
-        !req.body.caseId ||
-        !req.body.sectionName
-      ) {
-        return res.status(400).json({ error: "Missing required fields." });
-      }
-
-      // Extract case data from the request body
+      // Check if required fields are present
       const {
         mainTypeName,
         complaintTypeName,
@@ -37,29 +27,32 @@ router.post(
         answerChoices,
       } = req.body;
 
+      if (!mainTypeName || !complaintTypeName || !caseId || !sectionName) {
+        return res.status(400).json({ error: "Missing required fields." });
+      }
+
+      // Parse answer choices
       const answerChoicesInJson = JSON.parse(answerChoices);
 
+      // Determine the type of question
       let caseQuestionType = null;
-      // Check the type of question
       if (questionType === "single") {
-        if (req.files.length === 0) {
-          caseQuestionType = "multipleChoiceType";
-        } else if (req.files.length === 1) {
-          caseQuestionType = "multipleChoiceTypeWithQuestionImage";
-        } else if (req.files.length >= 1) {
-          caseQuestionType = "multipleChoiceTypeWithImages";
-        }
+        caseQuestionType =
+          req.files.length === 0
+            ? "multipleChoiceType"
+            : req.files.length === 1
+            ? "multipleChoiceTypeWithQuestionImage"
+            : "multipleChoiceTypeWithImages";
       } else if (questionType === "multiple") {
-        if (req.files.length === 0) {
-          caseQuestionType = "multipleAnswerType";
-        } else if (req.files.length === 1) {
-          caseQuestionType = "multipleAnswerTypeWithQuestionImage";
-        } else if (req.files.length >= 1) {
-          caseQuestionType = "multipleAnswerTypeWithImages";
-        }
+        caseQuestionType =
+          req.files.length === 0
+            ? "multipleAnswerType"
+            : req.files.length === 1
+            ? "multipleAnswerTypeWithQuestionImage"
+            : "multipleAnswerTypeWithImages";
       }
-      console.log(caseQuestionType);
 
+      // Reference to Firestore collection
       const complaintTypeRef = db
         .collection(COLLECTION_NAME)
         .doc(mainTypeName)
@@ -68,333 +61,99 @@ router.post(
         .collection(sectionName);
 
       let newQuestionRef = null;
-      let file = null;
-      let fileStream = null;
-      let currentDateTime = null;
-      let fileUpload = null;
-      let writeStream = null;
-      let downloadURL = null;
       let choices = [];
       let questionImageUrl = null;
-
       let i = 0;
-      switch (caseQuestionType) {
-        case "multipleChoiceTypeWithImages":
-          // Iterate over each file and process
-          for (const file of req.files) {
-            console.log(file); // you can see the file fields here, lots of good info from the parser
 
-            // convert the file buffer to a filestream
-            fileStream = Readable.from(file.buffer);
+      // Function to upload files to Firebase Storage
+      const uploadFile = async (file) => {
+        const fileStream = Readable.from(file.buffer);
+        const currentDateTime = moment().format("YYYYMMDD_HHmmss");
+        const fileUpload = bucket.file(
+          `Images/${currentDateTime}_${file.originalname}`
+        );
+        const writeStream = fileUpload.createWriteStream({
+          metadata: { contentType: file.mimetype },
+        });
 
-            // Construct a unique file path with the current date and time
-            currentDateTime = moment().format("YYYYMMDD_HHmmss");
-            // upload to firebase storage
-            fileUpload = bucket.file(
-              `Images/${currentDateTime}_${file.originalname}`
-            );
+        await new Promise((resolve, reject) => {
+          fileStream
+            .pipe(writeStream)
+            .on("error", reject)
+            .on("finish", resolve);
+        });
 
-            // create writestream with the contentType of the incoming file
-            writeStream = fileUpload.createWriteStream({
-              metadata: {
-                contentType: file.mimetype,
-              },
-            });
+        const downloadURL = await fileUpload.getSignedUrl({
+          action: "read",
+          expires: "12-31-9999",
+        });
+        return downloadURL[0];
+      };
 
-            // pipe the filestream to be written to storage
-            fileStream
-              .pipe(writeStream)
-              .on("error", (error) => {
-                console.error("Error:", error);
-              })
-              .on("finish", () => {
-                console.log("File upload complete");
-              });
+      // Process files and construct choices
+      if (
+        [
+          "multipleChoiceTypeWithImages",
+          "multipleAnswerTypeWithImages",
+        ].includes(caseQuestionType)
+      ) {
+        for (const file of req.files) {
+          const downloadURL = await uploadFile(file);
 
-            // Get the download URL of the uploaded image with no expiration
-            downloadURL = await fileUpload.getSignedUrl({
-              action: "read",
-              expires: "12-31-9999", // Set to a far future date
-            });
-
-            if (file.fieldname === "QuestionImage") {
-              questionImageUrl = downloadURL;
-              continue;
-            }
-
-            // Push the download URL along with the key name
+          if (file.fieldname === "QuestionImage") {
+            questionImageUrl = downloadURL;
+          } else {
             choices.push({
               text: answerChoicesInJson.answerChoices[i].text,
               choiceId: file.fieldname,
-              imageUrl: downloadURL[0],
+              imageUrl: downloadURL,
               isCorrect: answerChoicesInJson.answerChoices[i].isCorrect,
             });
             i++;
           }
+        }
 
-          if (questionImageUrl === null) {
-            caseQuestionType = "multipleChoiceTypeWithAnswerImage";
-          } else {
-            caseQuestionType = "multipleChoiceTypeWithQuestionAndAnswerImage";
-          }
-
-          newQuestionRef = await complaintTypeRef.add({
-            Question: {
-              questionType: caseQuestionType,
-              question: question,
-              choices: choices,
-              questionImageUrl: questionImageUrl,
-            },
-          });
-
-          res.status(201).json({
-            message: "Question uploaded successfully.",
-            mainComplaintType: mainTypeName,
-            caseName: complaintTypeName,
-            caseId: caseId,
-            questionId: newQuestionRef.id,
-            questionType: caseQuestionType,
-            questionImageUrl: questionImageUrl,
-            choices: choices,
-          });
-          break;
-        case "multipleChoiceTypeWithQuestionImage":
-          file = req.files[0];
-          console.log(file); // you can see the file fields here, lots of good info from the parser
-
-          // convert the file buffer to a filestream
-          fileStream = Readable.from(file.buffer);
-
-          // Construct a unique file path with the current date and time
-          currentDateTime = moment().format("YYYYMMDD_HHmmss");
-          // upload to firebase storage
-          fileUpload = bucket.file(
-            `Images/${currentDateTime}_${file.originalname}`
+        if (!questionImageUrl) {
+          caseQuestionType = caseQuestionType.replace(
+            "WithImages",
+            "WithAnswerImage"
           );
-
-          // create writestream with the contentType of the incoming file
-          writeStream = fileUpload.createWriteStream({
-            metadata: {
-              contentType: file.mimetype,
-            },
-          });
-
-          // pipe the filestream to be written to storage
-          fileStream
-            .pipe(writeStream)
-            .on("error", (error) => {
-              console.error("Error:", error);
-            })
-            .on("finish", () => {
-              console.log("File upload complete");
-            });
-
-          // Get the download URL of the uploaded image with no expiration
-          downloadURL = await fileUpload.getSignedUrl({
-            action: "read",
-            expires: "12-31-9999", // Set to a far future date
-          });
-
-          newQuestionRef = await complaintTypeRef.add({
-            Question: {
-              questionType: caseQuestionType,
-              question: question,
-              choices: answerChoicesInJson,
-              questionImageUrl: downloadURL,
-            },
-          });
-
-          res.status(201).json({
-            message: "Question uploaded successfully.",
-            mainComplaintType: mainTypeName,
-            caseName: complaintTypeName,
-            caseId: caseId,
-            questionId: newQuestionRef.id,
-            questionType: caseQuestionType,
-            questionImageUrl: downloadURL,
-            choices: answerChoicesInJson,
-          });
-          break;
-        case "multipleChoiceType":
-          newQuestionRef = await complaintTypeRef.add({
-            Question: {
-              questionType: caseQuestionType,
-              question: question,
-              choices: answerChoicesInJson,
-              questionImageUrl: null,
-            },
-          });
-
-          res.status(201).json({
-            message: "Question uploaded successfully.",
-            mainComplaintType: mainTypeName,
-            caseName: complaintTypeName,
-            caseId: caseId,
-            questionId: newQuestionRef.id,
-            questionType: caseQuestionType,
-            choices: answerChoicesInJson,
-          });
-          break;
-        case "multipleAnswerTypeWithImages":
-          // Iterate over each file and process
-          for (const file of req.files) {
-            console.log(file); // you can see the file fields here, lots of good info from the parser
-
-            // convert the file buffer to a filestream
-            fileStream = Readable.from(file.buffer);
-
-            // Construct a unique file path with the current date and time
-            currentDateTime = moment().format("YYYYMMDD_HHmmss");
-            // upload to firebase storage
-            fileUpload = bucket.file(
-              `Images/${currentDateTime}_${file.originalname}`
-            );
-
-            // create writestream with the contentType of the incoming file
-            writeStream = fileUpload.createWriteStream({
-              metadata: {
-                contentType: file.mimetype,
-              },
-            });
-
-            // pipe the filestream to be written to storage
-            fileStream
-              .pipe(writeStream)
-              .on("error", (error) => {
-                console.error("Error:", error);
-              })
-              .on("finish", () => {
-                console.log("File upload complete");
-              });
-
-            // Get the download URL of the uploaded image with no expiration
-            downloadURL = await fileUpload.getSignedUrl({
-              action: "read",
-              expires: "12-31-9999", // Set to a far future date
-            });
-
-            if (file.fieldname === "QuestionImage") {
-              questionImageUrl = downloadURL;
-              continue;
-            }
-
-            // Push the download URL along with the key name
-            choices.push({
-              text: answerChoicesInJson.answerChoices[i].text,
-              choiceId: [file.fieldname],
-              imageUrl: downloadURL[0],
-              isCorrect: answerChoicesInJson.answerChoices[i].isCorrect,
-            });
-            i++;
-          }
-
-          if (questionImageUrl === null) {
-            caseQuestionType = "multipleAnswerTypeWithAnswerImage";
-          } else {
-            caseQuestionType = "multipleAnswerTypeWithQuestionAndAnswerImage";
-          }
-
-          newQuestionRef = await complaintTypeRef.add({
-            Question: {
-              questionType: caseQuestionType,
-              question: question,
-              choices: choices,
-              questionImageUrl: questionImageUrl,
-            },
-          });
-
-          res.status(201).json({
-            message: "Question uploaded successfully.",
-            mainComplaintType: mainTypeName,
-            caseName: complaintTypeName,
-            caseId: caseId,
-            questionId: newQuestionRef.id,
-            questionType: caseQuestionType,
-            questionImageUrl: questionImageUrl,
-            choices: choices,
-          });
-
-          break;
-        case "multipleAnswerTypeWithQuestionImage":
-          file = req.files[0];
-          console.log(file); // you can see the file fields here, lots of good info from the parser
-
-          // convert the file buffer to a filestream
-          fileStream = Readable.from(file.buffer);
-
-          // Construct a unique file path with the current date and time
-          currentDateTime = moment().format("YYYYMMDD_HHmmss");
-          // upload to firebase storage
-          fileUpload = bucket.file(
-            `Images/${currentDateTime}_${file.originalname}`
+        } else {
+          caseQuestionType = caseQuestionType.replace(
+            "WithImages",
+            "WithQuestionAndAnswerImage"
           );
-
-          // create writestream with the contentType of the incoming file
-          writeStream = fileUpload.createWriteStream({
-            metadata: {
-              contentType: file.mimetype,
-            },
-          });
-
-          // pipe the filestream to be written to storage
-          fileStream
-            .pipe(writeStream)
-            .on("error", (error) => {
-              console.error("Error:", error);
-            })
-            .on("finish", () => {
-              console.log("File upload complete");
-            });
-
-          // Get the download URL of the uploaded image with no expiration
-          downloadURL = await fileUpload.getSignedUrl({
-            action: "read",
-            expires: "12-31-9999", // Set to a far future date
-          });
-
-          newQuestionRef = await complaintTypeRef.add({
-            Question: {
-              questionType: caseQuestionType,
-              question: question,
-              choices: answerChoicesInJson,
-              questionImageUrl: downloadURL,
-            },
-          });
-
-          res.status(201).json({
-            message: "Question uploaded successfully.",
-            mainComplaintType: mainTypeName,
-            caseName: complaintTypeName,
-            caseId: caseId,
-            questionId: newQuestionRef.id,
-            questionImageUrl: downloadURL,
-            questionType: caseQuestionType,
-            choices: answerChoicesInJson,
-          });
-          break;
-        case "multipleAnswerType":
-          newQuestionRef = await complaintTypeRef.add({
-            Question: {
-              questionType: caseQuestionType,
-              question: question,
-              choices: answerChoicesInJson,
-              questionImageUrl: null,
-            },
-          });
-
-          res.status(201).json({
-            message: "Question uploaded successfully.",
-            mainComplaintType: mainTypeName,
-            caseName: complaintTypeName,
-            caseId: caseId,
-            questionId: newQuestionRef.id,
-            questionType: caseQuestionType,
-            choices: answerChoicesInJson,
-          });
-          break;
-        default:
-          break;
+        }
+      } else if (
+        [
+          "multipleChoiceTypeWithQuestionImage",
+          "multipleAnswerTypeWithQuestionImage",
+        ].includes(caseQuestionType)
+      ) {
+        questionImageUrl = await uploadFile(req.files[0]);
       }
+
+      // Add question to Firestore
+      newQuestionRef = await complaintTypeRef.add({
+        Question: {
+          questionType: caseQuestionType,
+          question: question,
+          choices: choices.length ? choices : answerChoicesInJson,
+          questionImageUrl: questionImageUrl || null,
+        },
+      });
+
+      // Respond with success
+      res.status(201).json({
+        message: "Question uploaded successfully.",
+        mainComplaintType: mainTypeName,
+        caseName: complaintTypeName,
+        caseId: caseId,
+        questionId: newQuestionRef.id,
+        questionType: questionType,
+        questionImageUrl: questionImageUrl,
+        choices: choices.length ? choices : answerChoicesInJson,
+      });
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: "Internal Server Error" });

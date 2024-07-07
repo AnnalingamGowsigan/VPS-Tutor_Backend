@@ -31,6 +31,9 @@ app.use("/api/teethDetails", teethDetailsRoutes);
 const examintionQuestionsRoutes = require("./routes/examinationQuestionsRoutes");
 app.use("/api/examintionQuestions", examintionQuestionsRoutes);
 
+const caseTeethRoutes = require("./routes/caseTeethRoutes");
+app.use("/api/caseTeeth", caseTeethRoutes);
+
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
 });
